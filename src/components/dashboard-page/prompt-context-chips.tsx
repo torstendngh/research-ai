@@ -23,8 +23,8 @@ const PromptContextChips = ({
         <span
           key={chip.id}
           className={cn(
-            "group/chip flex max-w-full items-center gap-1.5 rounded-full",
-            "border border-zinc-200 bg-zinc-50 px-2.5 py-1",
+            "group/chip flex max-w-full items-center gap-1 rounded-full",
+            "border border-zinc-200 bg-zinc-50 p-1 pl-2",
             "text-xs text-zinc-700",
           )}
         >
