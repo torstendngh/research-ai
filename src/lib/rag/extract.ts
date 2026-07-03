@@ -1,4 +1,3 @@
-import { JSDOM } from "jsdom";
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
 import { PDFParse } from "pdf-parse";
@@ -64,6 +63,13 @@ export async function extractUrlSource(input: IngestUrlInput): Promise<Extracted
     }
 
     const html = await response.text();
+
+    // Imported lazily so jsdom (and its ESM-only transitive deps) only load
+    // when a URL is actually ingested. A top-level import pulled jsdom into the
+    // module graph of every rag consumer — including chat and PDF/text
+    // ingestion, which never touch it — so any jsdom load failure took them all
+    // down with it.
+    const { JSDOM } = await import("jsdom");
     const dom = new JSDOM(html, { url: input.url });
     const document = dom.window.document;
 
