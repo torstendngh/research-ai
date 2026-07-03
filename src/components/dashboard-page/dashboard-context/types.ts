@@ -7,6 +7,14 @@ export type PendingSource = {
   id: string;
   kind: "pdf" | "url" | "text";
   title: string;
+  /**
+   * Identity for matching against server rows before `sourceId` is known: the
+   * server inserts its row (status "processing") at the start of ingestion,
+   * so a refresh triggered by a batch-mate can surface it while this entry's
+   * request is still in flight — without these the row would render twice.
+   */
+  url?: string;
+  fileName?: string;
   status: "processing" | "failed";
   /**
    * The project this pending source belongs to. `null` while it was staged on
@@ -22,7 +30,7 @@ export type PendingSource = {
 
 /** A source the user staged for ingestion (add-sources dialog, drag-drop, discovery). */
 export type NewSourceInput =
-  | { kind: "url"; url: string }
+  | { kind: "url"; url: string; /** Display title, e.g. from AI discovery. */ title?: string }
   | { kind: "pdf"; file: File }
   | { kind: "text"; title: string; text: string };
 

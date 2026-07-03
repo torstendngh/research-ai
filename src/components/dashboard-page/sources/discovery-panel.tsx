@@ -10,43 +10,44 @@ import SourceFavicon from "./source-favicon";
 import { hostnameOf } from "./source-utils";
 
 /**
- * AI-found source suggestions, shown above the topic input until dismissed.
- * Adding a suggestion hands it to the normal URL ingestion flow, so progress
- * appears as a pending row in the list like any other source.
+ * AI-found source suggestions inside the add-sources dialog. Adding a
+ * suggestion stages it in the batch queue alongside PDFs, links, and text —
+ * nothing processes until the whole batch is submitted.
  */
 const DiscoveryPanel = ({
   topic,
   results,
-  addedUrls,
-  onAdd,
-  onAddAll,
+  stagedUrls,
+  onStage,
+  onStageAll,
   onDismiss,
   className,
 }: {
   topic: string;
   results: DiscoveredSource[];
-  addedUrls: Set<string>;
-  onAdd: (source: DiscoveredSource) => void;
-  onAddAll: () => void;
+  /** URLs already in the staged batch, to disable their Add buttons. */
+  stagedUrls: Set<string>;
+  onStage: (source: DiscoveredSource) => void;
+  onStageAll: () => void;
   onDismiss: () => void;
   className?: string;
 }) => {
-  const allAdded = results.every((result) => addedUrls.has(result.url));
+  const allStaged = results.every((result) => stagedUrls.has(result.url));
 
   return (
     <div
       className={cn(
-        "flex flex-col overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-md/3",
+        "flex flex-col overflow-hidden rounded-lg border border-zinc-200 bg-white",
         className,
       )}
     >
-      <div className="flex items-center gap-2 border-b border-zinc-200 px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-zinc-100 px-3 py-2">
         <AiSearchIcon className="size-4 shrink-0 text-zinc-400" />
         <p className="min-w-0 flex-1 truncate text-sm text-zinc-700" title={topic}>
-          Suggested sources for “{topic}”
+          Suggestions for “{topic}”
         </p>
         {results.length > 1 && (
-          <Button variant="ghost" size="xs" onClick={onAddAll} disabled={allAdded}>
+          <Button variant="ghost" size="xs" onClick={onStageAll} disabled={allStaged}>
             Add all
           </Button>
         )}
@@ -55,14 +56,15 @@ const DiscoveryPanel = ({
         </IconButton>
       </div>
 
-      <ul className="flex max-h-64 flex-col overflow-y-auto py-1">
+      {/* At most 5 suggestions come back, so no height cap — the tab scrolls. */}
+      <ul className="flex flex-col py-1">
         {results.length === 0 && (
           <li className="px-3 py-4 text-center text-sm text-zinc-400">
             Nothing suitable found — try a more specific topic.
           </li>
         )}
         {results.map((result) => {
-          const added = addedUrls.has(result.url);
+          const staged = stagedUrls.has(result.url);
           return (
             <li key={result.url} className="flex items-center gap-3 px-3 py-2">
               <div className="flex size-5 shrink-0 items-center justify-center text-zinc-400">
@@ -90,10 +92,10 @@ const DiscoveryPanel = ({
                 variant="outline"
                 size="xs"
                 className="shrink-0"
-                disabled={added}
-                onClick={() => onAdd(result)}
+                disabled={staged}
+                onClick={() => onStage(result)}
               >
-                {added ? "Added" : "Add"}
+                {staged ? "Added" : "Add"}
               </Button>
             </li>
           );

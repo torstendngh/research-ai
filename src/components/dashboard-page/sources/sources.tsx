@@ -2,23 +2,23 @@
 
 import { cn } from "@/lib/tailwind-utils";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import LogoIcon from "@/components/shared/icons/logo-icon";
+import AddIcon from "@/components/shared/icons/add-icon";
 import ConfirmDialog from "@/components/shared/confirm-dialog";
 import { deleteSource, setSourceEnabled, type Source } from "@/lib/actions/sources";
 import { useDashboard } from "../dashboard-context";
-import AddSourceDialog from "./add-source-dialog";
-import DiscoveryPanel from "./discovery-panel";
+import AddSourceDialog, { type AddSourceDialogHandle } from "./add-source-dialog";
 import PendingRow from "./pending-row";
 import SourceListItem from "./source-list-item";
-import SourcesControls from "./sources-controls";
 import { hasFiles } from "./source-utils";
-import { useSourceDiscovery } from "./use-source-discovery";
 
 const Sources = () => {
-  const { sources, pendingSources, project, addSources } = useDashboard();
+  const { sources, pendingSources, project } = useDashboard();
   const router = useRouter();
   const [isAdding, setIsAdding] = useState(false);
+  // Stages page-dropped PDFs into the dialog's batch.
+  const addDialogRef = useRef<AddSourceDialogHandle>(null);
   const [pendingDelete, setPendingDelete] = useState<Source | null>(null);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
   // Optimistic on/off state so the switch flips instantly; the refreshed server
@@ -26,8 +26,6 @@ const Sources = () => {
   const [enabledOverrides, setEnabledOverrides] = useState<
     Record<string, boolean>
   >({});
-
-  const discovery = useSourceDiscovery(project?.id ?? null, addSources);
 
   // Drag-and-drop; a depth counter because dragenter/dragleave also fire for
   // every child element crossed.
@@ -78,31 +76,37 @@ const Sources = () => {
     event.preventDefault();
     setDragDepth(0);
 
-    // One batch so project meta regenerates once for all dropped files.
-    addSources(
-      Array.from(event.dataTransfer.files)
-        .filter(
-          (file) =>
-            file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"),
-        )
-        .map((file) => ({ kind: "pdf" as const, file })),
+    // Route drops through the add dialog so they get the same batch treatment
+    // (size warnings, time estimate, one meta generation on confirm).
+    const pdfs = Array.from(event.dataTransfer.files).filter(
+      (file) =>
+        file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"),
     );
+    if (pdfs.length === 0) return;
+    addDialogRef.current?.stageFiles(pdfs);
+    setIsAdding(true);
   };
 
   const isEmpty = sources.length === 0 && pendingSources.length === 0;
 
   // Shared between the empty-state hero and the regular bottom bar.
-  const controls = (
-    <SourcesControls
-      onAddClick={() => setIsAdding(true)}
-      topic={discovery.topic}
-      onTopicChange={discovery.onTopicChange}
-      onDiscover={discovery.discover}
-      isDiscovering={discovery.isDiscovering}
-    />
+  const addButton = (
+    <button
+      type="button"
+      onClick={() => setIsAdding(true)}
+      className={cn(
+        "flex min-h-11.5 w-full items-center justify-center gap-2 shadow-md/3",
+        "px-4 rounded-full",
+        "cursor-pointer bg-white hover:bg-zinc-100",
+        "border border-zinc-200",
+      )}
+    >
+      <div className="flex items-center justify-center p-0.5 bg-zinc-100 rounded-full">
+        <AddIcon className="size-5" />
+      </div>
+      <span className="text-sm">Add sources</span>
+    </button>
   );
-
-  const discoveryPanel = discovery.discovery;
 
   return (
     // Centered column so the list stays readable when the view is full-width.
@@ -122,7 +126,7 @@ const Sources = () => {
       onDrop={handleDrop}
     >
       {isEmpty ? (
-        // Empty state: logo + pitch with the controls front and center. The
+        // Empty state: logo + pitch with the add button front and center. The
         // moment the first source starts processing, the list layout takes over.
         <div className="flex flex-1 flex-col items-center justify-center gap-8 overflow-y-auto p-6">
           <div className="flex flex-col items-center gap-4 text-center">
@@ -132,30 +136,13 @@ const Sources = () => {
                 Start with your sources
               </h2>
               <p className="max-w-sm text-sm text-balance text-zinc-400">
-                Upload PDFs, paste links or text, drop files anywhere — or ask
-                AI to find material on your topic.
+                Collect PDFs, links, text, and AI-found sources in one batch —
+                drop files anywhere or press the button below.
               </p>
             </div>
           </div>
 
-          <div className="flex w-full max-w-xl flex-col gap-2">
-            {controls}
-
-            {discoveryPanel && (
-              <DiscoveryPanel
-                topic={discoveryPanel.topic}
-                results={discoveryPanel.results}
-                addedUrls={discovery.addedUrls}
-                onAdd={discovery.addSuggestion}
-                onAddAll={discovery.addAllSuggestions}
-                onDismiss={discovery.dismiss}
-              />
-            )}
-
-            {discovery.error && (
-              <p className="px-2 text-xs text-red-600">{discovery.error}</p>
-            )}
-          </div>
+          <div className="flex w-full max-w-xs flex-col gap-2">{addButton}</div>
         </div>
       ) : (
         <>
@@ -176,23 +163,7 @@ const Sources = () => {
             ))}
           </ul>
 
-          {discoveryPanel && (
-            <DiscoveryPanel
-              className="mx-4 mb-2"
-              topic={discoveryPanel.topic}
-              results={discoveryPanel.results}
-              addedUrls={discovery.addedUrls}
-              onAdd={discovery.addSuggestion}
-              onAddAll={discovery.addAllSuggestions}
-              onDismiss={discovery.dismiss}
-            />
-          )}
-
-          {discovery.error && (
-            <p className="mx-4 mb-2 text-xs text-red-600">{discovery.error}</p>
-          )}
-
-          <div className="flex p-4 pt-0 mt-2">{controls}</div>
+          <div className="flex p-4 pt-0 mt-2">{addButton}</div>
         </>
       )}
 
@@ -211,7 +182,11 @@ const Sources = () => {
         </div>
       )}
 
-      <AddSourceDialog isOpen={isAdding} onClose={() => setIsAdding(false)} />
+      <AddSourceDialog
+        ref={addDialogRef}
+        isOpen={isAdding}
+        onClose={() => setIsAdding(false)}
+      />
 
       <ConfirmDialog
         open={pendingDelete !== null}

@@ -3,34 +3,24 @@
 import { useState } from "react";
 import { postApi } from "@/lib/api-client";
 import type { DiscoveredSource } from "@/lib/rag/discover";
-import type { NewSourceInput } from "../dashboard-context";
 
 /**
- * "Ask AI to find sources on a topic" state: runs the discovery request, tracks
- * which suggestions have already been added, and stages them (individually or
- * all at once) through the dashboard's `addSources`.
+ * "Ask AI to find sources on a topic" state for the add-sources dialog: runs
+ * the discovery request and holds the suggestions. Staging the suggestions
+ * into the batch is the dialog's job — this hook only fetches.
  */
-export function useSourceDiscovery(
-  projectId: string | null,
-  addSources: (inputs: NewSourceInput[]) => void,
-) {
-  const [topic, setTopic] = useState("");
+export function useSourceDiscovery(projectId: string | null) {
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [discovery, setDiscovery] = useState<{
     topic: string;
     results: DiscoveredSource[];
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [addedUrls, setAddedUrls] = useState<Set<string>>(new Set());
 
-  const onTopicChange = (value: string) => {
-    setTopic(value);
-    setError(null);
-  };
-
-  const discover = async () => {
+  /** Resolves true on success so the caller knows to clear its input. */
+  const discover = async (topic: string): Promise<boolean> => {
     const trimmed = topic.trim();
-    if (!trimmed || isDiscovering) return;
+    if (!trimmed || isDiscovering) return false;
 
     setIsDiscovering(true);
     setError(null);
@@ -43,41 +33,24 @@ export function useSourceDiscovery(
     setIsDiscovering(false);
     if (result.ok) {
       setDiscovery({ topic: trimmed, results: result.data });
-      setAddedUrls(new Set());
-      setTopic("");
-    } else {
-      setError(result.error);
+      return true;
     }
+    setError(result.error);
+    return false;
   };
 
-  const addSuggestion = (suggestion: DiscoveredSource) => {
-    addSources([{ kind: "url", url: suggestion.url }]);
-    setAddedUrls((prev) => new Set(prev).add(suggestion.url));
-  };
-
-  const addAllSuggestions = () => {
-    const remaining = (discovery?.results ?? []).filter(
-      (result) => !addedUrls.has(result.url),
-    );
-    // One batch so project meta regenerates once for all of them.
-    addSources(remaining.map((result) => ({ kind: "url" as const, url: result.url })));
-    setAddedUrls((prev) => {
-      const next = new Set(prev);
-      for (const result of remaining) next.add(result.url);
-      return next;
-    });
+  const reset = () => {
+    setDiscovery(null);
+    setError(null);
   };
 
   return {
-    topic,
-    onTopicChange,
     isDiscovering,
     discovery,
     error,
-    addedUrls,
     discover,
-    addSuggestion,
-    addAllSuggestions,
+    clearError: () => setError(null),
     dismiss: () => setDiscovery(null),
+    reset,
   };
 }

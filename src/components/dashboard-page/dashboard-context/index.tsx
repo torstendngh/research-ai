@@ -5,10 +5,11 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import type { Project } from "@/lib/actions/projects";
 import type { Source } from "@/lib/actions/sources";
 import type { Chat, ChatMessage } from "@/lib/actions/chats";
@@ -126,13 +127,47 @@ export const DashboardProvider = ({
     [pendingStore, draft.ensureProject],
   );
 
+  // Server rows sit at "processing" while their ingest request runs (the row
+  // is inserted up front, before the client learns its id). Poll so they flip
+  // to ready/failed on every tab without a manual reload — the pending store
+  // polls too, but only while it still holds client-side rows.
+  const router = useRouter();
+  const hasProcessingSources = sources.some(
+    (s) => s.status && s.status !== "ready" && s.status !== "failed",
+  );
+  useEffect(() => {
+    if (!hasProcessingSources) return;
+    const interval = setInterval(() => router.refresh(), 5000);
+    return () => clearInterval(interval);
+  }, [hasProcessingSources, router]);
+
   // The overview reflects generated meta, which lags behind ingestion: show a
-  // loader while this project's sources are still processing or its meta is
-  // being (re)generated.
+  // loader while this project's sources are still processing (client-side
+  // pending rows or server rows mid-ingest) or its meta is being (re)generated.
   const isGeneratingOverview =
     pendingSources.some((p) => p.status === "processing") ||
+    hasProcessingSources ||
     (persistedProjectId !== null &&
       pendingStore.metaGeneratingProjectIds.has(persistedProjectId));
+
+  // Self-heal stuck meta: a successful generation always writes a description,
+  // so ready sources + no description means a past run failed (it used to fail
+  // silently, leaving the project as "Untitled project" forever). Regenerate
+  // once per project per session, only while nothing else is in flight.
+  const metaHealAttempted = useRef<Set<string>>(new Set());
+  const hasReadySources = sources.some((s) => !s.status || s.status === "ready");
+  const needsMetaHeal =
+    persistedProjectId !== null &&
+    project !== null &&
+    !project.description &&
+    hasReadySources &&
+    !isGeneratingOverview;
+  useEffect(() => {
+    if (!needsMetaHeal || !persistedProjectId) return;
+    if (metaHealAttempted.current.has(persistedProjectId)) return;
+    metaHealAttempted.current.add(persistedProjectId);
+    void pendingStore.regenerateMeta(persistedProjectId);
+  }, [needsMetaHeal, persistedProjectId, pendingStore]);
 
   // Reset client state whenever we navigate to a different project. Refreshing
   // the same project (e.g. after adding a source) keeps the open chat untouched.

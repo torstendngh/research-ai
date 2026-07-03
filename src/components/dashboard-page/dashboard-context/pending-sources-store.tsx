@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -40,6 +41,8 @@ interface PendingSourcesStore {
     inputs: NewSourceInput[],
     ensureProject: () => Promise<Project>,
   ) => void;
+  /** Regenerate a project's title/description/topics (serialized per project). */
+  regenerateMeta: (projectId: string) => Promise<void>;
   dismissPendingSource: (id: string) => void;
   removePendingSources: (ids: string[]) => void;
 }
@@ -64,6 +67,46 @@ export function PendingSourcesProvider({ children }: { children: ReactNode }) {
       return next;
     });
   }, []);
+
+  // While anything is ingesting, poll the server list so the UI reconciles
+  // even when a one-off refresh raced or was dropped — pending rows resolve
+  // into their server rows (or reveal failures) without a manual reload.
+  const hasPending = pendingSources.length > 0;
+  useEffect(() => {
+    if (!hasPending) return;
+    const interval = setInterval(() => router.refresh(), 4000);
+    return () => clearInterval(interval);
+  }, [hasPending, router]);
+
+  // One meta generation per project at a time. Concurrent batches chain onto
+  // the in-flight run instead of racing it, and each run retries once — the
+  // overview renders from this, so a silently dropped run left it empty.
+  const metaRuns = useRef<Map<string, Promise<void>>>(new Map());
+  const runProjectMeta = useCallback(
+    (projectId: string) => {
+      const prev = metaRuns.current.get(projectId) ?? Promise.resolve();
+      const run = prev.then(async () => {
+        setMetaGenerating(projectId, true);
+        try {
+          const result = await postApi(`/api/projects/${projectId}/meta`, {});
+          if (!result.ok) {
+            await postApi(`/api/projects/${projectId}/meta`, {});
+          }
+          router.refresh();
+        } finally {
+          setMetaGenerating(projectId, false);
+        }
+      });
+      metaRuns.current.set(projectId, run);
+      void run.then(() => {
+        if (metaRuns.current.get(projectId) === run) {
+          metaRuns.current.delete(projectId);
+        }
+      });
+      return run;
+    },
+    [router, setMetaGenerating],
+  );
 
   const markFailed = useCallback((id: string, error: string) => {
     setPendingSources((prev) =>
@@ -129,8 +172,10 @@ export function PendingSourcesProvider({ children }: { children: ReactNode }) {
             input.kind === "pdf"
               ? input.file.name
               : input.kind === "url"
-                ? input.url
+                ? input.title || input.url
                 : input.title,
+          url: input.kind === "url" ? input.url : undefined,
+          fileName: input.kind === "pdf" ? input.file.name : undefined,
           status: "processing" as const,
           // Unknown until the project is ensured; shown on the draft page
           // (projectId === null) until then, then re-tagged to the real id.
@@ -164,17 +209,11 @@ export function PendingSourcesProvider({ children }: { children: ReactNode }) {
         );
 
         if (outcomes.some(Boolean)) {
-          setMetaGenerating(target.id, true);
-          try {
-            await postApi(`/api/projects/${target.id}/meta`, {});
-            router.refresh();
-          } finally {
-            setMetaGenerating(target.id, false);
-          }
+          await runProjectMeta(target.id);
         }
       })();
     },
-    [ingestOne, markFailed, router, setMetaGenerating],
+    [ingestOne, markFailed, runProjectMeta],
   );
 
   const dismissPendingSource = useCallback((id: string) => {
@@ -192,6 +231,7 @@ export function PendingSourcesProvider({ children }: { children: ReactNode }) {
       pendingSources,
       metaGeneratingProjectIds,
       addSources,
+      regenerateMeta: runProjectMeta,
       dismissPendingSource,
       removePendingSources,
     }),
@@ -199,6 +239,7 @@ export function PendingSourcesProvider({ children }: { children: ReactNode }) {
       pendingSources,
       metaGeneratingProjectIds,
       addSources,
+      runProjectMeta,
       dismissPendingSource,
       removePendingSources,
     ],
@@ -220,6 +261,46 @@ export function usePendingSourcesStore() {
 }
 
 /**
+ * A pending row is settled once the server list carries its row. Matched by
+ * `sourceId` when the ingest response already arrived, otherwise by identity
+ * (URL / file name / title): the server inserts its row with status
+ * "processing" at the *start* of ingestion, so a refresh triggered by a
+ * batch-mate finishing can surface it while this entry's request is still in
+ * flight — matching by id alone rendered those sources twice. Each server row
+ * settles at most one pending row (`claimed`) so two identical staged items
+ * don't both vanish against a single server row.
+ */
+function settledPendingIds(pending: PendingSource[], sources: Source[]): Set<string> {
+  const claimed = new Set<string>();
+  const settled = new Set<string>();
+
+  for (const p of pending) {
+    // Failed rows settle too when a server row exists (the ingest got far
+    // enough to insert one, so the server row carries the status and error —
+    // keeping the client copy would show the failure twice). Failures without
+    // a server row (network, quota) stay until dismissed.
+    const match = sources.find((s) => {
+      if (claimed.has(s.id)) return false;
+      if (p.sourceId) return s.id === p.sourceId;
+      if (p.kind === "pdf") {
+        return s.source_type === "pdf" && s.file_name === p.fileName;
+      }
+      if (p.kind === "url") {
+        return s.source_type === "url" && s.url === p.url;
+      }
+      return s.source_type === "text" && s.title === p.title;
+    });
+
+    if (match) {
+      claimed.add(match.id);
+      settled.add(p.id);
+    }
+  }
+
+  return settled;
+}
+
+/**
  * The pending rows to show on one project's page: those tagged for this project
  * (or the still-untagged draft rows when this *is* the draft page), minus any
  * whose ingestion already landed in the refreshed server `sources` list.
@@ -233,18 +314,17 @@ export function useProjectPendingSources(sources: Source[], projectId: string | 
     [pendingSources, projectId],
   );
 
+  const settled = useMemo(
+    () => settledPendingIds(forThisProject, sources),
+    [forThisProject, sources],
+  );
+
   useEffect(() => {
-    const settled = forThisProject
-      .filter((p) => p.sourceId && sources.some((s) => s.id === p.sourceId))
-      .map((p) => p.id);
-    removePendingSources(settled);
-  }, [forThisProject, sources, removePendingSources]);
+    removePendingSources([...settled]);
+  }, [settled, removePendingSources]);
 
   return useMemo(
-    () =>
-      forThisProject.filter(
-        (p) => !(p.sourceId && sources.some((s) => s.id === p.sourceId)),
-      ),
-    [forThisProject, sources],
+    () => forThisProject.filter((p) => !settled.has(p.id)),
+    [forThisProject, settled],
   );
 }

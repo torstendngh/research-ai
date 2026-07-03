@@ -57,14 +57,15 @@ function parseMeta(raw: string): ProjectMeta | null {
 
 /**
  * Build a fresh title, description, and topic list for a project from its
- * sources, then persist them. Called after a source is ingested. Best-effort:
- * callers should not let a failure here fail the ingest, so this swallows/logs
- * its own errors.
+ * sources, then persist them. Called after a source is ingested. Never
+ * throws (callers must not let a failure here fail the ingest), but reports
+ * success so callers can retry or surface a failure — silently swallowing it
+ * left projects stuck as "Untitled project" with no way to recover.
  */
 export async function regenerateProjectMeta(
     projectId: string,
     ownerId: string,
-): Promise<void> {
+): Promise<boolean> {
     try {
         const { data: sources, error: sourcesError } = await supabase
             .from("rag_sources")
@@ -74,7 +75,7 @@ export async function regenerateProjectMeta(
             .order("created_at", { ascending: true });
 
         if (sourcesError) throw sourcesError;
-        if (!sources || sources.length === 0) return;
+        if (!sources || sources.length === 0) return false;
 
         const sourceIds = sources.map((s) => s.id as string);
 
@@ -129,7 +130,7 @@ export async function regenerateProjectMeta(
         });
 
         const meta = parseMeta(response.output_text);
-        if (!meta) return;
+        if (!meta) return false;
 
         const { error: updateError } = await supabase
             .from("projects")
@@ -143,7 +144,10 @@ export async function regenerateProjectMeta(
             .eq("owner_id", ownerId);
 
         if (updateError) throw updateError;
+
+        return true;
     } catch (error) {
         console.error("Project meta regeneration failed:", error);
+        return false;
     }
 }

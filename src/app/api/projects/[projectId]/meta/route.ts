@@ -36,7 +36,15 @@ export async function POST(
         return Response.json({ error: "Project not found." }, { status: 404 });
     }
 
-    await regenerateProjectMeta(projectId, ownerId);
+    const generated = await regenerateProjectMeta(projectId, ownerId);
+    if (!generated) {
+        // Surface the failure so the client can retry — a 200 here left
+        // projects stuck as "Untitled project" with nothing ever retrying.
+        return Response.json(
+            { error: "Could not generate the project overview." },
+            { status: 502 },
+        );
+    }
 
     revalidatePath(`/dashboard/${projectId}`);
 
