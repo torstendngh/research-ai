@@ -1,6 +1,5 @@
 import { Readability } from "@mozilla/readability";
 import TurndownService from "turndown";
-import { PDFParse } from "pdf-parse";
 
 import { blocksFromMarkdown, blocksFromPlainText } from "./blocks";
 import { sha256 } from "./crypto-utils";
@@ -15,18 +14,17 @@ export async function extractPdfSource(input: IngestPdfInput): Promise<Extracted
                 : new Uint8Array(input.fileBuffer),
         );
 
-    // pdf-parse v2 reconstructs logical lines itself (lineEnforce defaults to
-    // true), so each page's text already comes back newline-separated.
-    const parser = new PDFParse({ data: buffer });
+    // unpdf wraps a serverless build of pdfjs with no native deps: pdf-parse's
+    // pdfjs stack needed @napi-rs/canvas's native binary to define DOMMatrix,
+    // which Vercel's function bundler didn't ship, so it crashed at load on
+    // deploy. Imported lazily so pdfjs only loads when a PDF is actually
+    // ingested — chat and URL/text ingestion never touch it.
+    const { extractText } = await import("unpdf");
+    const { text } = await extractText(new Uint8Array(buffer), { mergePages: false });
 
-    let parsed;
-    try {
-        parsed = await parser.getText();
-    } finally {
-        await parser.destroy();
-    }
-
-    const blocks = parsed.pages.flatMap((page) => blocksFromPlainText(page.text, page.num));
+    const blocks = text.flatMap((pageText, index) =>
+        blocksFromPlainText(pageText, index + 1),
+    );
 
     return {
         sourceType: "pdf",
