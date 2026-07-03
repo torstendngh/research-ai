@@ -64,14 +64,13 @@ export async function extractUrlSource(input: IngestUrlInput): Promise<Extracted
 
     const html = await response.text();
 
-    // Imported lazily so jsdom (and its ESM-only transitive deps) only load
-    // when a URL is actually ingested. A top-level import pulled jsdom into the
-    // module graph of every rag consumer — including chat and PDF/text
-    // ingestion, which never touch it — so any jsdom load failure took them all
-    // down with it.
-    const { JSDOM } = await import("jsdom");
-    const dom = new JSDOM(html, { url: input.url });
-    const document = dom.window.document;
+    // linkedom instead of jsdom: a lightweight, pure-JS DOM that bundles and
+    // runs cleanly on serverless. jsdom's transitive deps pulled in an ESM-only
+    // module that a CJS require() couldn't load on Vercel's Node runtime, which
+    // crashed the whole rag module graph. Imported lazily so it only loads when
+    // a URL is actually ingested — chat and PDF/text ingestion never touch it.
+    const { parseHTML } = await import("linkedom");
+    const { document } = parseHTML(html);
 
     const canonicalUrl =
         document.querySelector("link[rel='canonical']")?.getAttribute("href") ??

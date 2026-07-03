@@ -2,9 +2,6 @@
   "name": "research-ai",
   "version": "0.1.0",
   "private": true,
-  "engines": {
-    "node": "22.x"
-  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -21,7 +18,7 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dagre": "^0.8.5",
-    "jsdom": "^29.1.1",
+    "linkedom": "^0.18.12",
     "motion": "^12.42.0",
     "next": "16.2.9",
     "openai": "^6.45.0",
@@ -38,7 +35,6 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/dagre": "^0.7.54",
-    "@types/jsdom": "^28.0.3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
