@@ -51,7 +51,12 @@ export function useDraftProject(project: Project | null) {
 
     const created = await creatingDraftProjectRef.current.promise;
     setCreatedDraftProject(created);
-    router.replace(`/dashboard/${created.id}`);
+    // Carry the open tab (mirrored into `?tab=` by the provider) through the
+    // navigation. Without it the new route falls back to its default, and a
+    // batch-mate's ingest can land a server row before the route's sources
+    // fetch runs — resolving the default to Overview instead of Sources.
+    const tab = new URLSearchParams(window.location.search).get("tab");
+    router.replace(`/dashboard/${created.id}${tab ? `?tab=${tab}` : ""}`);
     return created;
   }, [createdDraftProject, draftKey, project, router]);
 
