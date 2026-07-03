@@ -34,6 +34,8 @@ import type { NewSourceInput, PendingSource } from "./types";
  */
 interface PendingSourcesStore {
   pendingSources: PendingSource[];
+  /** Project ids whose title/description/topics are currently regenerating. */
+  metaGeneratingProjectIds: ReadonlySet<string>;
   addSources: (
     inputs: NewSourceInput[],
     ensureProject: () => Promise<Project>,
@@ -47,6 +49,21 @@ const PendingSourcesContext = createContext<PendingSourcesStore | null>(null);
 export function PendingSourcesProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [pendingSources, setPendingSources] = useState<PendingSource[]>([]);
+  // Projects whose meta (title/description/topics) is regenerating after a
+  // batch — the overview shows a loader for these.
+  const [metaGeneratingProjectIds, setMetaGeneratingProjectIds] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+
+  const setMetaGenerating = useCallback((projectId: string, active: boolean) => {
+    setMetaGeneratingProjectIds((prev) => {
+      if (active === prev.has(projectId)) return prev;
+      const next = new Set(prev);
+      if (active) next.add(projectId);
+      else next.delete(projectId);
+      return next;
+    });
+  }, []);
 
   const markFailed = useCallback((id: string, error: string) => {
     setPendingSources((prev) =>
@@ -147,12 +164,17 @@ export function PendingSourcesProvider({ children }: { children: ReactNode }) {
         );
 
         if (outcomes.some(Boolean)) {
-          await postApi(`/api/projects/${target.id}/meta`, {});
-          router.refresh();
+          setMetaGenerating(target.id, true);
+          try {
+            await postApi(`/api/projects/${target.id}/meta`, {});
+            router.refresh();
+          } finally {
+            setMetaGenerating(target.id, false);
+          }
         }
       })();
     },
-    [ingestOne, markFailed, router],
+    [ingestOne, markFailed, router, setMetaGenerating],
   );
 
   const dismissPendingSource = useCallback((id: string) => {
@@ -166,8 +188,20 @@ export function PendingSourcesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ pendingSources, addSources, dismissPendingSource, removePendingSources }),
-    [pendingSources, addSources, dismissPendingSource, removePendingSources],
+    () => ({
+      pendingSources,
+      metaGeneratingProjectIds,
+      addSources,
+      dismissPendingSource,
+      removePendingSources,
+    }),
+    [
+      pendingSources,
+      metaGeneratingProjectIds,
+      addSources,
+      dismissPendingSource,
+      removePendingSources,
+    ],
   );
 
   return (

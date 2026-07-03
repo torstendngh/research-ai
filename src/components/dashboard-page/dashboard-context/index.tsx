@@ -51,6 +51,8 @@ interface DashboardContextValue {
   pendingSources: PendingSource[];
   addSources: (inputs: NewSourceInput[]) => void;
   dismissPendingSource: (id: string) => void;
+  /** The project's overview (title/description/topics) is being (re)generated. */
+  isGeneratingOverview: boolean;
 
   // Chat (client state)
   chats: Chat[];
@@ -124,6 +126,14 @@ export const DashboardProvider = ({
     [pendingStore, draft.ensureProject],
   );
 
+  // The overview reflects generated meta, which lags behind ingestion: show a
+  // loader while this project's sources are still processing or its meta is
+  // being (re)generated.
+  const isGeneratingOverview =
+    pendingSources.some((p) => p.status === "processing") ||
+    (persistedProjectId !== null &&
+      pendingStore.metaGeneratingProjectIds.has(persistedProjectId));
+
   // Reset client state whenever we navigate to a different project. Refreshing
   // the same project (e.g. after adding a source) keeps the open chat untouched.
   // Done during render (not in an effect) so it happens before paint.
@@ -153,6 +163,7 @@ export const DashboardProvider = ({
         pendingSources,
         addSources,
         dismissPendingSource: pendingStore.dismissPendingSource,
+        isGeneratingOverview,
         chats: chat.chats,
         activeChat: chat.activeChat,
         messages: chat.messages,

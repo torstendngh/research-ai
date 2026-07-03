@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import LoadingIcon from "@/components/shared/icons/loading-icon";
 import { useDashboard } from "../dashboard-context";
 import SourceFavicon from "../sources/source-favicon";
 import { sourceSubtitle } from "../sources/source-utils";
@@ -44,7 +45,8 @@ const SectionLabel = ({ children }: { children: string }) => (
 );
 
 const Overview = () => {
-  const { project, sources, chatPrompt, setMainTab } = useDashboard();
+  const { project, sources, chatPrompt, setMainTab, isGeneratingOverview } =
+    useDashboard();
   const theme = useMemo(
     () => themeFromProjectId(project?.id ?? ""),
     [project?.id],
@@ -55,6 +57,27 @@ const Overview = () => {
     [description],
   );
   const topics = project?.topics ?? [];
+
+  // The overview is derived from generated meta. Until that first generation
+  // lands there's nothing meaningful to show, so present a loader instead of
+  // the placeholder hero + fallback copy.
+  const hasContent = Boolean(project?.description) || topics.length > 0;
+  if (isGeneratingOverview && !hasContent) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+        <LoadingIcon className="size-6 animate-spin text-zinc-400" />
+        <div className="flex flex-col gap-1">
+          <p className="text-sm font-medium text-zinc-600">
+            Generating project overview
+          </p>
+          <p className="max-w-xs text-pretty text-sm text-zinc-400">
+            Reading your sources to summarize the project&apos;s scope, themes,
+            and key topics.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const askAboutTopic = (label: string) => {
     chatPrompt.fill(`Tell me more about ${label}.`);
@@ -99,7 +122,15 @@ const Overview = () => {
 
       <div className="max-w-3xl mx-auto px-8 pb-24 sm:px-10">
         <section className="pt-10">
-          <SectionLabel>About this project</SectionLabel>
+          <div className="flex items-center gap-2">
+            <SectionLabel>About this project</SectionLabel>
+            {isGeneratingOverview && (
+              <span className="flex items-center gap-1.5 text-xs text-zinc-400">
+                <LoadingIcon className="size-3 animate-spin" />
+                Updating
+              </span>
+            )}
+          </div>
           <div className="mt-4 space-y-5">
             {paragraphs.map((paragraph, index) => (
               <p
