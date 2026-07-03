@@ -3,7 +3,12 @@
 import "@xyflow/react/dist/style.css";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Background, ReactFlow, ReactFlowProvider } from "@xyflow/react";
+import {
+  Background,
+  ReactFlow,
+  ReactFlowProvider,
+  type ReactFlowInstance,
+} from "@xyflow/react";
 import { Button } from "@/components/shared/button";
 import LoadingIcon from "@/components/shared/icons/loading-icon";
 import { postApi } from "@/lib/api-client";
@@ -25,7 +30,7 @@ async function syncMindmap(
 import { mindmapChip } from "../prompt-context-format";
 import { useDashboard } from "../dashboard-context";
 import CenteredMessage from "./centered-message";
-import { toFlow } from "./layout";
+import { NODE_HEIGHT, toFlow } from "./layout";
 import { nodeTypes } from "./mindmap-node";
 import ConfirmDialog from "@/components/shared/confirm-dialog";
 import MindmapToolbar from "./mindmap-toolbar";
@@ -141,6 +146,24 @@ const MindMap = () => {
     [graph],
   );
 
+  // Center point of the root node (positions are top-left; width is per-column).
+  const rootFocus = useMemo(() => {
+    const root = nodes.find((node) => node.data.isRoot);
+    if (!root) return null;
+    const width = typeof root.style?.width === "number" ? root.style.width : 140;
+    return { x: root.position.x + width / 2, y: root.position.y + NODE_HEIGHT / 2 };
+  }, [nodes]);
+
+  // Start at 100% zoom with the root node centered (rather than fit-to-view).
+  // Runs once the flow reports its viewport size (onInit) and again if the root
+  // moves (e.g. after regenerating), so it lands with correct pane dimensions.
+  const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
+  useEffect(() => {
+    if (flow && rootFocus) {
+      flow.setCenter(rootFocus.x, rootFocus.y, { zoom: 1, duration: 0 });
+    }
+  }, [flow, rootFocus]);
+
   const hasNodes = nodes.length > 0;
   const showInitialLoader = !graph && !isError && !!projectId;
   const isUpdating = isRegenerating || (!isUpToDate && !isError);
@@ -172,8 +195,7 @@ const MindMap = () => {
                 nodes={nodes}
                 edges={edges}
                 nodeTypes={nodeTypes}
-                fitView
-                fitViewOptions={{ padding: 0.2 }}
+                onInit={setFlow}
                 minZoom={0.2}
                 nodesDraggable={false}
                 nodesConnectable={false}
