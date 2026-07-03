@@ -19,10 +19,17 @@ export type MindmapNodeData = {
   label: string;
   path: string[];
   isRoot: boolean;
+  /** Whether this node has children in the full graph (collapsed or not). */
+  hasChildren: boolean;
+  /** Whether its children are currently shown. */
+  isExpanded: boolean;
+  /** Number of direct children (shown as a badge while collapsed). */
+  childCount: number;
 };
 
 function MindmapNodeView({ data }: NodeProps) {
-  const { label, path, isRoot } = data as unknown as MindmapNodeData;
+  const { label, path, isRoot, hasChildren, isExpanded, childCount } =
+    data as unknown as MindmapNodeData;
   const menu = useContext(NodeMenuContext);
 
   return (
@@ -30,9 +37,12 @@ function MindmapNodeView({ data }: NodeProps) {
       className={cn(
         // `group` drives the hover reveal of the ask button; `pointer-events-auto`
         // lets the node receive hover (React Flow sets nodes to pointer-events:none).
-        "group pointer-events-auto",
+        "group pointer-events-auto relative",
         "flex w-full items-center gap-1.5 rounded-[10px] border py-1.5 pr-1.5 pl-2.5",
         "shadow-[0_1px_2px_rgba(24,24,27,0.04)]",
+        // Clicking a node with children expands/collapses it (handled by the
+        // flow's onNodeClick), so hint that it's interactive.
+        hasChildren && "cursor-pointer",
         isRoot
           ? "border-zinc-900 bg-zinc-900 text-white"
           : "border-zinc-200 bg-white text-zinc-700",
@@ -51,6 +61,23 @@ function MindmapNodeView({ data }: NodeProps) {
       >
         {label}
       </span>
+      {hasChildren && !isExpanded && (
+        // Collapsed: a badge with the number of hidden children, floated off the
+        // node's right edge — where those children would appear when expanded.
+        <span
+          aria-label={`${childCount} more`}
+          className={cn(
+            "absolute left-full top-1/2 ml-2 -translate-y-1/2",
+            "flex h-5 min-w-5 items-center justify-center rounded-md border px-1",
+            "text-[10px] font-semibold tabular-nums shadow-[0_1px_2px_rgba(24,24,27,0.04)]",
+            isRoot
+              ? "border-zinc-900 bg-zinc-900 text-white"
+              : "border-zinc-200 bg-white text-zinc-500",
+          )}
+        >
+          {childCount}
+        </span>
+      )}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button

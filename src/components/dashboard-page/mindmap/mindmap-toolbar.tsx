@@ -3,8 +3,10 @@
 import { useReactFlow } from "@xyflow/react";
 import { cn } from "@/lib/tailwind-utils";
 import IconButton from "@/components/shared/icon-button";
+import ExplodeIcon from "@/components/shared/icons/explode-icon";
 import LoadingIcon from "@/components/shared/icons/loading-icon";
 import RegenerateIcon from "@/components/shared/icons/regenerate-icon";
+import ResetIcon from "@/components/shared/icons/reset-icon";
 import ZoomFitIcon from "@/components/shared/icons/zoom-fit-icon";
 import ZoomInIcon from "@/components/shared/icons/zoom-in-icon";
 import ZoomOutIcon from "@/components/shared/icons/zoom-out-icon";
@@ -12,10 +14,16 @@ import ZoomOutIcon from "@/components/shared/icons/zoom-out-icon";
 /** Floating zoom/fit controls plus the regenerate action, top-right of the canvas. */
 const MindmapToolbar = ({
   onRegenerate,
+  onExpandAll,
+  onCollapseAll,
   disabled,
   isUpdating,
 }: {
   onRegenerate: () => void;
+  /** Reveal every node. */
+  onExpandAll: () => void;
+  /** Collapse back to the first layer (roots only). */
+  onCollapseAll: () => void;
   disabled: boolean;
   isUpdating: boolean;
 }) => {
@@ -31,6 +39,13 @@ const MindmapToolbar = ({
       </IconButton>
       <IconButton label="Fit view" onClick={() => fitView({ padding: 0.2, duration: 200 })}>
         <ZoomFitIcon className="size-5" />
+      </IconButton>
+      <div className="mx-1 h-5 w-px bg-zinc-200" />
+      <IconButton label="Expand all" onClick={onExpandAll} disabled={disabled}>
+        <ExplodeIcon className="size-5" />
+      </IconButton>
+      <IconButton label="Collapse all" onClick={onCollapseAll} disabled={disabled}>
+        <ResetIcon className="size-5" />
       </IconButton>
       <div className="mx-1 h-5 w-px bg-zinc-200" />
       <button

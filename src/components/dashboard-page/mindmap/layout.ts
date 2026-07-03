@@ -12,6 +12,14 @@ function estimateWidth(label: string): number {
   return Math.min(200, Math.max(140, Math.round(label.length * 6.6) + 52));
 }
 
+/** The ids of the graph's root nodes (no parent, or parent not in the graph). */
+export function rootIdsOf(graph: MindmapGraph): string[] {
+  const ids = new Set(graph.nodes.map((node) => node.id));
+  return graph.nodes
+    .filter((node) => !node.parentId || !ids.has(node.parentId))
+    .map((node) => node.id);
+}
+
 /**
  * Deterministic tidy-tree layout, left to right:
  *
@@ -22,8 +30,15 @@ function estimateWidth(label: string): number {
  *     children, and sibling subtrees never overlap by construction;
  *   - bezier edges fan out from a parent's right side to its children's left
  *     sides — no orthogonal segments that can run on top of each other.
+ *
+ * Only nodes under an `expanded` ancestor chain are laid out: a node's children
+ * appear when the node is in `expanded`, so collapsed branches take no space and
+ * the map stays neat. (Roots seeded into `expanded` show their first layer.)
  */
-export function toFlow(graph: MindmapGraph): { nodes: Node[]; edges: Edge[] } {
+export function toFlow(
+  graph: MindmapGraph,
+  expanded: ReadonlySet<string>,
+): { nodes: Node[]; edges: Edge[] } {
   const byId = new Map(graph.nodes.map((node) => [node.id, node]));
 
   const pathOf = (id: string): string[] => {
@@ -51,15 +66,21 @@ export function toFlow(graph: MindmapGraph): { nodes: Node[]; edges: Edge[] } {
     }
   }
 
-  // Pass 1: depth of every node → per-column width (widest label wins).
+  // A node's children are only laid out (and shown) while it's expanded.
+  const shownChildren = (id: string): string[] =>
+    expanded.has(id) ? (childrenOf.get(id) ?? []) : [];
+
+  // Pass 1: depth of every *visible* node → per-column width (widest label wins).
   const depthOf = new Map<string, number>();
   const columnWidth: number[] = [];
+  const visible = new Set<string>();
 
   const measure = (id: string, depth: number) => {
+    visible.add(id);
     depthOf.set(id, depth);
     const label = byId.get(id)?.label ?? "";
     columnWidth[depth] = Math.max(columnWidth[depth] ?? 0, estimateWidth(label));
-    for (const childId of childrenOf.get(id) ?? []) measure(childId, depth + 1);
+    for (const childId of shownChildren(id)) measure(childId, depth + 1);
   };
   rootIds.forEach((rootId) => measure(rootId, 0));
 
@@ -75,7 +96,7 @@ export function toFlow(graph: MindmapGraph): { nodes: Node[]; edges: Edge[] } {
   let cursor = 0;
 
   const place = (id: string): number => {
-    const childIds = childrenOf.get(id) ?? [];
+    const childIds = shownChildren(id);
 
     if (childIds.length === 0) {
       const center = cursor + NODE_HEIGHT / 2;
@@ -93,8 +114,13 @@ export function toFlow(graph: MindmapGraph): { nodes: Node[]; edges: Edge[] } {
   };
   rootIds.forEach((rootId) => place(rootId));
 
+  // Edges only between two visible nodes (a child is visible only when its
+  // parent is expanded, so this drops edges into collapsed branches).
   const edges: Edge[] = graph.nodes
-    .filter((node) => node.parentId && byId.has(node.parentId))
+    .filter(
+      (node) =>
+        node.parentId && visible.has(node.id) && visible.has(node.parentId),
+    )
     .map((node) => ({
       id: `${node.parentId}-${node.id}`,
       source: node.parentId as string,
@@ -103,22 +129,32 @@ export function toFlow(graph: MindmapGraph): { nodes: Node[]; edges: Edge[] } {
       style: { stroke: "#d4d4d8", strokeWidth: 1.5 },
     }));
 
-  const nodes: Node[] = graph.nodes.map((node) => {
-    const depth = depthOf.get(node.id) ?? 0;
+  const nodes: Node[] = graph.nodes
+    .filter((node) => visible.has(node.id))
+    .map((node) => {
+      const depth = depthOf.get(node.id) ?? 0;
+      const childCount = childrenOf.get(node.id)?.length ?? 0;
 
-    return {
-      id: node.id,
-      type: "mindmap",
-      data: { label: node.label, path: pathOf(node.id), isRoot: depth === 0 },
-      position: {
-        x: columnX[depth] ?? 0,
-        y: (centerY.get(node.id) ?? 0) - NODE_HEIGHT / 2,
-      },
-      draggable: false,
-      connectable: false,
-      style: { width: columnWidth[depth] ?? estimateWidth(node.label) },
-    };
-  });
+      return {
+        id: node.id,
+        type: "mindmap",
+        data: {
+          label: node.label,
+          path: pathOf(node.id),
+          isRoot: depth === 0,
+          hasChildren: childCount > 0,
+          isExpanded: expanded.has(node.id) && childCount > 0,
+          childCount,
+        },
+        position: {
+          x: columnX[depth] ?? 0,
+          y: (centerY.get(node.id) ?? 0) - NODE_HEIGHT / 2,
+        },
+        draggable: false,
+        connectable: false,
+        style: { width: columnWidth[depth] ?? estimateWidth(node.label) },
+      };
+    });
 
   return { nodes, edges };
 }

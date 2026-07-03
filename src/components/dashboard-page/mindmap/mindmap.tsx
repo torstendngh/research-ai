@@ -2,11 +2,12 @@
 
 import "@xyflow/react/dist/style.css";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   ReactFlow,
   ReactFlowProvider,
+  type Node,
   type ReactFlowInstance,
 } from "@xyflow/react";
 import { Button } from "@/components/shared/button";
@@ -30,8 +31,8 @@ async function syncMindmap(
 import { mindmapChip } from "../prompt-context-format";
 import { useDashboard } from "../dashboard-context";
 import CenteredMessage from "./centered-message";
-import { NODE_HEIGHT, toFlow } from "./layout";
-import { nodeTypes } from "./mindmap-node";
+import { NODE_HEIGHT, rootIdsOf, toFlow } from "./layout";
+import { nodeTypes, type MindmapNodeData } from "./mindmap-node";
 import ConfirmDialog from "@/components/shared/confirm-dialog";
 import MindmapToolbar from "./mindmap-toolbar";
 import { NodeMenuContext } from "./node-menu-context";
@@ -141,9 +142,50 @@ const MindMap = () => {
   const isUpToDate = current?.signature === readySignature;
   const isError = errorKey === currentKey;
 
+  // Which nodes are expanded (children shown). Reset to just the roots whenever
+  // a new graph loads (each load is a fresh object, incl. regenerate), so the
+  // map opens showing only the first layer.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+  const [expandedFor, setExpandedFor] = useState<MindmapGraph | null>(null);
+  if (graph !== expandedFor) {
+    setExpandedFor(graph);
+    setExpanded(graph ? new Set(rootIdsOf(graph)) : new Set());
+  }
+
+  const toggleNode = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  // Explode: reveal every node. Collapse: back to the first layer (roots only).
+  // Both re-frame the whole (new) layout — see the fit-view effect below. Set
+  // the flag before the state change so it's live when the new nodes render.
+  const fitAfterLayoutRef = useRef(false);
+  const expandAll = useCallback(() => {
+    fitAfterLayoutRef.current = true;
+    setExpanded(graph ? new Set(graph.nodes.map((node) => node.id)) : new Set());
+  }, [graph]);
+  const collapseAll = useCallback(() => {
+    fitAfterLayoutRef.current = true;
+    setExpanded(graph ? new Set(rootIdsOf(graph)) : new Set());
+  }, [graph]);
+
+  const handleNodeClick = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      if ((node.data as unknown as MindmapNodeData).hasChildren) {
+        toggleNode(node.id);
+      }
+    },
+    [toggleNode],
+  );
+
   const { nodes, edges } = useMemo(
-    () => (graph ? toFlow(graph) : { nodes: [], edges: [] }),
-    [graph],
+    () => (graph ? toFlow(graph, expanded) : { nodes: [], edges: [] }),
+    [graph, expanded],
   );
 
   // Center point of the root node (positions are top-left; width is per-column).
@@ -155,14 +197,32 @@ const MindMap = () => {
   }, [nodes]);
 
   // Start at 100% zoom with the root node centered (rather than fit-to-view).
-  // Runs once the flow reports its viewport size (onInit) and again if the root
-  // moves (e.g. after regenerating), so it lands with correct pane dimensions.
+  // Keyed on the graph (not on `rootFocus`) so expanding/collapsing a branch
+  // doesn't yank the viewport back — only a fresh graph re-centers. Read via a
+  // ref so it uses the current root position without re-running on layout shifts.
   const [flow, setFlow] = useState<ReactFlowInstance | null>(null);
+  const rootFocusRef = useRef(rootFocus);
   useEffect(() => {
-    if (flow && rootFocus) {
-      flow.setCenter(rootFocus.x, rootFocus.y, { zoom: 1, duration: 0 });
+    rootFocusRef.current = rootFocus;
+  }, [rootFocus]);
+  useEffect(() => {
+    const focus = rootFocusRef.current;
+    if (flow && focus) {
+      flow.setCenter(focus.x, focus.y, { zoom: 1, duration: 0 });
     }
-  }, [flow, rootFocus]);
+  }, [flow, graph]);
+
+  // After Expand all / Collapse all, frame the new layout. Runs once the
+  // updated nodes have rendered (this effect is keyed on `nodes`); the rAF lets
+  // React Flow measure the freshly shown/hidden nodes before fitting.
+  useEffect(() => {
+    if (!fitAfterLayoutRef.current || !flow) return;
+    fitAfterLayoutRef.current = false;
+    const raf = requestAnimationFrame(() =>
+      flow.fitView({ padding: 0.2, duration: 200 }),
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [nodes, flow]);
 
   const hasNodes = nodes.length > 0;
   const showInitialLoader = !graph && !isError && !!projectId;
@@ -196,6 +256,7 @@ const MindMap = () => {
                 edges={edges}
                 nodeTypes={nodeTypes}
                 onInit={setFlow}
+                onNodeClick={handleNodeClick}
                 minZoom={0.2}
                 nodesDraggable={false}
                 nodesConnectable={false}
@@ -206,6 +267,8 @@ const MindMap = () => {
                 <Background color="#e4e4e7" gap={16} />
                 <MindmapToolbar
                   onRegenerate={() => setConfirmRegen(true)}
+                  onExpandAll={expandAll}
+                  onCollapseAll={collapseAll}
                   disabled={!projectId || isUpdating}
                   isUpdating={isUpdating}
                 />
