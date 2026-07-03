@@ -8,6 +8,13 @@ export type PendingSource = {
   kind: "pdf" | "url" | "text";
   title: string;
   status: "processing" | "failed";
+  /**
+   * The project this pending source belongs to. `null` while it was staged on
+   * the draft (unsaved) project and the real project id isn't known yet; set to
+   * the real id once the project is ensured. The pending store lives above the
+   * route, so this is how each project's page shows only its own pending rows.
+   */
+  projectId: string | null;
   /** Set once ingestion succeeds; used to match the entry against `sources`. */
   sourceId?: string;
   error?: string;

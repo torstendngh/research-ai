@@ -2,6 +2,7 @@
 
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useState,
@@ -20,7 +21,10 @@ import type {
 import { TAB_TO_SLUG } from "./tabs";
 import { useChats } from "./use-chats";
 import { useDraftProject } from "./use-draft-project";
-import { usePendingSources } from "./use-pending-sources";
+import {
+  usePendingSourcesStore,
+  useProjectPendingSources,
+} from "./pending-sources-store";
 import { usePromptControls } from "./use-prompt-controls";
 
 export type {
@@ -104,22 +108,30 @@ export const DashboardProvider = ({
   }, [mainTab, pathname]);
 
   const draft = useDraftProject(project);
-  const ingestion = usePendingSources(sources, draft.ensureProject);
   const chat = useChats(initialChats, draft.ensureProject);
   const prompt = usePromptControls();
   const podcastPrompt = usePromptControls();
   const quizPrompt = usePromptControls();
 
+  // Source ingestion state lives above the route (in the dashboard layout) so
+  // it survives the `/dashboard` → `/dashboard/[id]` remount on project
+  // creation. Here we just select the rows for the project on screen.
+  const persistedProjectId = project?.id ?? null;
+  const pendingStore = usePendingSourcesStore();
+  const pendingSources = useProjectPendingSources(sources, persistedProjectId);
+  const addSources = useCallback(
+    (inputs: NewSourceInput[]) => pendingStore.addSources(inputs, draft.ensureProject),
+    [pendingStore, draft.ensureProject],
+  );
+
   // Reset client state whenever we navigate to a different project. Refreshing
   // the same project (e.g. after adding a source) keeps the open chat untouched.
   // Done during render (not in an effect) so it happens before paint.
-  const persistedProjectId = project?.id ?? null;
   const [trackedProjectId, setTrackedProjectId] = useState(persistedProjectId);
   if (persistedProjectId !== trackedProjectId) {
     setTrackedProjectId(persistedProjectId);
     setMainTab(defaultTabFor(sources));
     draft.reset();
-    ingestion.reset();
     chat.reset();
     prompt.reset();
     podcastPrompt.reset();
@@ -138,9 +150,9 @@ export const DashboardProvider = ({
         isDraftProject: draft.isDraftProject,
         ensureProject: draft.ensureProject,
         sources,
-        pendingSources: ingestion.pendingSources,
-        addSources: ingestion.addSources,
-        dismissPendingSource: ingestion.dismissPendingSource,
+        pendingSources,
+        addSources,
+        dismissPendingSource: pendingStore.dismissPendingSource,
         chats: chat.chats,
         activeChat: chat.activeChat,
         messages: chat.messages,
