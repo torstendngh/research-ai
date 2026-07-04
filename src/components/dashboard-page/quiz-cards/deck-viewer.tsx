@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/tailwind-utils";
 import IconButton from "@/components/shared/icon-button";
 import AddIcon from "@/components/shared/icons/add-icon";
@@ -27,6 +27,9 @@ const DeckViewer = ({ deck, onClose }: { deck: QuizDeck; onClose: () => void }) 
   const [flipped, setFlipped] = useState(false);
   const [results, setResults] = useState<Record<number, boolean>>({});
   const [finished, setFinished] = useState(false);
+  // Locks input while the card flips back to the question before advancing, so
+  // the next card's content never shows through the mid-flip back face.
+  const [advancing, setAdvancing] = useState(false);
 
   const cardIndex = order[pos];
   const card = deck.cards[cardIndex];
@@ -34,7 +37,35 @@ const DeckViewer = ({ deck, onClose }: { deck: QuizDeck; onClose: () => void }) 
   const correctCount = Object.values(results).filter(Boolean).length;
   const missedIndices = order.filter((index) => results[index] === false);
 
+  // Keep the flip-back animation and the card swap in step. Must match the
+  // card's `transition-transform duration-500` below.
+  const FLIP_MS = 500;
+  const advanceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Flip back to the question and swap the card at the flip's midpoint — when
+  // the card is edge-on (90deg) and neither face is visible — so the content
+  // change is hidden by the animation instead of popping in at rest.
+  const flipBackThen = (next: () => void) => {
+    setFlipped(false);
+    setAdvancing(true);
+    if (advanceTimer.current) clearTimeout(advanceTimer.current);
+    advanceTimer.current = setTimeout(() => {
+      next();
+      // Unlock once the flip has settled back on the question side.
+      advanceTimer.current = setTimeout(() => setAdvancing(false), FLIP_MS / 2);
+    }, FLIP_MS / 2);
+  };
+
+  useEffect(
+    () => () => {
+      if (advanceTimer.current) clearTimeout(advanceTimer.current);
+    },
+    [],
+  );
+
   const startRound = (indices: number[]) => {
+    if (advanceTimer.current) clearTimeout(advanceTimer.current);
+    setAdvancing(false);
     setOrder(indices);
     setPos(0);
     setFlipped(false);
@@ -43,18 +74,23 @@ const DeckViewer = ({ deck, onClose }: { deck: QuizDeck; onClose: () => void }) 
   };
 
   const grade = (correct: boolean) => {
+    if (advancing) return;
     setResults((prev) => ({ ...prev, [cardIndex]: correct }));
     if (pos >= order.length - 1) {
-      setFinished(true);
+      // No card swap to hide; the flip-back still gets its moment before the
+      // summary replaces the card.
+      flipBackThen(() => setFinished(true));
       return;
     }
-    setFlipped(false);
-    setPos((prev) => prev + 1);
+    flipBackThen(() => setPos((prev) => prev + 1));
   };
 
   const goBack = () => {
-    if (pos === 0) return;
-    setFlipped(false);
+    if (pos === 0 || advancing) return;
+    if (flipped) {
+      flipBackThen(() => setPos((prev) => prev - 1));
+      return;
+    }
     setPos((prev) => prev - 1);
   };
 
@@ -70,13 +106,14 @@ const DeckViewer = ({ deck, onClose }: { deck: QuizDeck; onClose: () => void }) 
         // Don't hijack keys aimed at a button (e.g. the grade or close buttons).
         if (event.target instanceof HTMLElement && event.target !== document.body) return;
         event.preventDefault();
+        if (advancing) return;
         setFlipped((prev) => !prev);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pos, order.length, finished]);
+  }, [pos, order.length, finished, advancing]);
 
   if (finished) {
     const total = order.length;
@@ -185,14 +222,16 @@ const DeckViewer = ({ deck, onClose }: { deck: QuizDeck; onClose: () => void }) 
       <div className="flex flex-1 items-center justify-center overflow-y-auto p-6">
         <button
           type="button"
-          onClick={() => setFlipped((prev) => !prev)}
+          onClick={() => !advancing && setFlipped((prev) => !prev)}
           aria-label={flipped ? "Show question" : "Show answer"}
           className="w-full max-w-xl cursor-pointer [perspective:1200px] focus:outline-0"
         >
           <div
             className={cn(
               "relative grid min-h-72 w-full",
-              "transition-transform duration-500 [transform-style:preserve-3d]",
+              // ease-in-out is symmetric, so the halfway point in time (FLIP_MS/2)
+              // is exactly 90deg — where the card is edge-on and we swap content.
+              "transition-transform duration-500 ease-in-out [transform-style:preserve-3d]",
               flipped && "[transform:rotateY(180deg)]",
             )}
           >
@@ -276,7 +315,7 @@ const DeckViewer = ({ deck, onClose }: { deck: QuizDeck; onClose: () => void }) 
         ) : (
           <button
             type="button"
-            onClick={() => setFlipped(true)}
+            onClick={() => !advancing && setFlipped(true)}
             className={cn(
               "flex flex-1 max-w-xs items-center justify-center self-center rounded-full px-4 py-2 text-sm font-medium",
               "bg-zinc-900 text-white",
